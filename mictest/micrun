@@ -1,0 +1,8 @@
+export SINK_LD_LIBRARY_PATH=/opt/intel/composer_xe_2013/lib/mic:/opt/intel/mkl/lib/mic
+export MKL_MIC_ENABLE=1
+export MIC_ENV_PREFIX=MIC
+export MIC_KMP_AFFINITY="granularity=thread,balanced"
+export MIC_USE_2MB_BUFFERS=32K
+export MIC_MKL_DYNAMIC=false
+
+/opt/intel/mic/bin/micnativeloadex $1 
