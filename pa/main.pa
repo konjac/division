@@ -1,0 +1,65 @@
+#include <omp.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <immintrin.h>
+#include "util.h"
+#define _USE_MIC
+$include "parray.pa"
+int main(int argc, char *argv[]){_pa_main(); return 0;}
+#define THREAD_NUM (59*4)
+#define REPEAT (1<<17)
+#define NDIMS 8
+$var NITERS(32)
+$var NPAR(8)
+$var NEXP(5)
+double flops(double t) {
+	return 1.0 * NDIMS * THREAD_NUM * REPEAT * ($NPAR * $NITERS) / t * 1000.0 / 1e9;
+}
+$subprog DIV8(a, b, c)
+	do{
+		__m512d y = b;
+		c = _mm512_fnmadd_pd(a, y, a);
+		$repeat(k,0,$NEXP){
+			y = _mm512_mul_pd(y, y);
+			c = _mm512_fmadd_pd(c, y, c);
+		}
+	}while(0);
+$end
+$subprog test()
+    double m[THREAD_NUM] = {0};
+	#pragma offload target(mic) in(m:length(THREAD_NUM) alloc_if(1) free_if(0))
+    {}
+    double t1 = getTimerValue();
+	#pragma offload target(mic) nocopy(m)
+    {
+        #pragma omp parallel num_threads(THREAD_NUM)
+        {
+            int pid = omp_get_thread_num();
+            double x = pid / 10000.0 + 1;
+            m[pid] = 0.0;
+		#ifdef __MIC__
+            __m512d jdv = _mm512_set_pd(0., 1., 2., 3., 4., 5., 6., 7.);
+            __m512d xv = _mm512_set1_pd(x);
+            for(int i = 0; i < REPEAT; ++i) {
+                __m512d jv[$NPAR];
+				$repeat(k, 0, $NPAR){jv[@k@] = _mm512_set1_pd(i); }
+				for(int l = 0; l < $NITERS; ++l){
+					$repeat(k,0,$NPAR){
+						$DIV8(jv[@k@], xv, jv[@k@]);
+                    }
+                }
+                $repeat(k,0,$NPAR) {m[pid] += _mm512_reduce_add_pd(jv[@k@]);}
+            }
+		#endif
+        }
+    }
+    double t2 = getTimerValue();
+	#pragma offload target(mic) out(m:length(THREAD_NUM) alloc_if(0) free_if(1))
+    {}
+    printf("%-30sflops = %f Gflops\n", __FUNCTION__, flops(t2 - t1));
+$end
+
+$main{
+    for(int i = 0; i < 10; ++i) {$test()};
+}
+
