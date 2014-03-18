@@ -34,7 +34,7 @@ __global__ void division2() {
     m[x] = __fdividef(1.0f, x);
 }
 
-#define USE_SELF_DIV
+//#define USE_SELF_DIV
 #ifdef USE_SELF_DIV
 
 __device__ float divF(float x, float number)
@@ -64,8 +64,10 @@ __device__ float divF(float x, float number)
 #endif
 
 __global__ void division() {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	float x = tid;
     for (int i = 0; i < ITERATION_PER_THREAD; i++) {
+		x += 0.001;
         /*
         float p1 = __fdividef(__fdividef(__fdividef(__fdividef(__fdividef(__fdividef(__fdividef(__fdividef((i+20001.0f), x), x), x), x), x), x), x), x);
         float p2 = __fdividef(__fdividef(__fdividef(__fdividef(__fdividef(__fdividef(__fdividef(__fdividef((i+20001.1f), x), x), x), x), x), x), x), x);
@@ -78,7 +80,7 @@ __global__ void division() {
         */
 
         float p1 = i + 20001.0f;
-        p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
+/*        p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
@@ -87,7 +89,7 @@ __global__ void division() {
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x), x), x), x), x), x), x), x);
 
-        /*
+       */
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.01f), x+0.02f), x+0.03f), x+0.04f), x+0.05f), x+0.06f), x+0.07f), x+0.08f);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.09f), x+0.10f), x+0.11f), x+0.12f), x+0.13f), x+0.14f), x+0.15f), x+0.16f);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.17f), x+0.18f), x+0.19f), x+0.20f), x+0.21f), x+0.22f), x+0.23f), x+0.24f);
@@ -96,9 +98,9 @@ __global__ void division() {
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.41f), x+0.42f), x+0.43f), x+0.44f), x+0.45f), x+0.46f), x+0.47f), x+0.48f);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.49f), x+0.50f), x+0.51f), x+0.52f), x+0.53f), x+0.54f), x+0.55f), x+0.56f);
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.57f), x+0.58f), x+0.59f), x+0.60f), x+0.61f), x+0.62f), x+0.63f), x+0.64f);
-        */
+        
 
-        m[x] += p1;
+        m[tid] += p1;
     }
 }
 int main(int argc, char* argv[])
@@ -125,5 +127,5 @@ int main(int argc, char* argv[])
     cudaEventElapsedTime( &time, start, stop );
     cudaEventDestroy( start );
     cudaEventDestroy( stop );
-    printf("time = %f ms, Mflops=%.2f \n", time, GFLOPS(time));
+    printf("time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 }
