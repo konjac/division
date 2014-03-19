@@ -6,8 +6,8 @@ $$
 \dfrac{1}{1+y} &=\dfrac{1-y}{1-y^2} \\
 &=\dfrac{(1-y)(1+y^2)}{1-y^4}\\
 &=\cdots\\
-&=\dfrac{(1-y)(1+y^2)\cdots (1-y^{2^k})\cdots}{1-y^{2^{k+1}}} \\
-&\approx (1-y)(1+y^2)\cdots (1-y^{2^k})\cdots
+&=\dfrac{(1-y)(1+y^2)\cdots (1+y^{2^k})\cdots}{1-y^{2^{k+1}}} \\
+&\approx (1-y)(1+y^2)\cdots (1+y^{2^k})\cdots
 \end{align}
 $$
 
