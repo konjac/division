@@ -1,0 +1,185 @@
+#include <omp.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <math.h>
+#include <immintrin.h>
+#include "util.h"
+#define _USE_MIC
+$include "parray.pa"
+int main(int argc, char *argv[]) {
+    _pa_main();
+    return 0;
+}
+#define THREAD_NUM (59*4)
+#define REPEAT (1<<7)  // ideal 1<<12
+#define NDIMS 8
+#define NITERS (256)    // ideal 256
+$var NSIMD(4) 			// ideal 128
+$var NEXPANDS(2)
+//#define DIV_TAB_SIZE 512
+#define DIV_TAB_SIZE 4
+//#define KA1023 0x8070000000000000
+#define KA1023 0x80b0000000000000
+#define PERFORM
+#define N (1<<15)
+typedef union {
+    __m512d d;
+    __m512i i;
+} m512di;
+$parray {paged double[THREAD_NUM][[N / 8][8]]} PAGED
+$parray {micmem double[THREAD_NUM][[N / 8][8]]} MIC
+
+$subprog div_a1b(a, b, c) {
+    __m512d y = b;
+    c = _mm512_fnmadd_pd(a, y, a);
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        c = _mm512_fmadd_pd(c, y, c);
+    }
+}
+$end
+$subprog div_ab(a, b, c, table) {  // if take a*2^k and b*2^k, we can save the first scaling
+    const __m512i minus1 = _mm512_set1_pd(-1.0);
+    const __m512i mask_pow =  _mm512_set1_epi64(0xfff0000000000000);
+    const __m512i ka1023 =  _mm512_set1_epi64(KA1023);
+
+    m512di kmx;
+    kmx.d = b;
+    kmx.i = _mm512_and_epi64(kmx.i, mask_pow); // kmx.f = 2^x
+    kmx.i = _mm512_sub_epi64(ka1023, kmx.i);  // kmx.f = 2^(k-x)
+    __m512d bprime = _mm512_mul_pd(b, kmx.d); // bprime = b*2^(k-x)
+    __m512i n = _mm512_cvtfxpnt_roundpd_epu32lo(bprime, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+    __m512d r = _mm512_i32logather_pd(n, table, sizeof(double));    // r = 1/n
+    __m512d y = _mm512_fmadd_pd(r, bprime, minus1);  //  y = b*2^(k-x)/n-1
+    r = _mm512_mul_pd(r, kmx.d);   // r = 2^(k-x)/n
+    c = _mm512_mul_pd(r, a); //  c = a*2^(k-x)/n
+    c = _mm512_fnmadd_pd(c, y, c); // c = a*2(k-x)/n*(1-y)
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        c = _mm512_fmadd_pd(c, y, c);
+    }
+}
+$end
+$subprog div_ab2(a, b, c, a2, b2, c2, a3, b3, c3, table) {  // if take a*2^k and b*2^k, we can save the first scaling
+    const __m512d minus1 = _mm512_set1_pd(-1.0);
+    const __m512i mask_pow =  _mm512_set1_epi64(0xfff0000000000000);
+    const __m512i ka1023 =  _mm512_set1_epi64(KA1023);
+
+    m512di kmx;
+    kmx.d = b;
+    m512di kmx2;
+    kmx2.d = b2;
+    m512di kmx3;
+    kmx3.d = b3;
+    kmx.i = _mm512_and_epi64(kmx.i, mask_pow); // kmx.f = 2^x
+    kmx2.i = _mm512_and_epi64(kmx2.i, mask_pow); // kmx.f = 2^x
+    kmx3.i = _mm512_and_epi64(kmx3.i, mask_pow); // kmx.f = 2^x
+    kmx.i = _mm512_sub_epi64(ka1023, kmx.i);  // kmx.f = 2^(k-x)
+    kmx2.i = _mm512_sub_epi64(ka1023, kmx2.i);  // kmx.f = 2^(k-x)
+    kmx3.i = _mm512_sub_epi64(ka1023, kmx3.i);  // kmx.f = 2^(k-x)
+    __m512d bprime = _mm512_mul_pd(b, kmx.d); // bprime = b*2^(k-x)
+    __m512d bprime2 = _mm512_mul_pd(b2, kmx2.d); // bprime = b*2^(k-x)
+    __m512d bprime3 = _mm512_mul_pd(b3, kmx3.d); // bprime = b*2^(k-x)
+//        __m512i n = _mm512_cvtfxpnt_roundpd_epu32lo(bprime, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+//        __m512i n2 = _mm512_cvtfxpnt_roundpd_epu32lo(bprime2, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+//        __m512i n3 = _mm512_cvtfxpnt_roundpd_epu32lo(bprime3, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+//        __m512d r = _mm512_i32logather_pd (n, table, sizeof(double));   // r = 1/n
+//        __m512d r2 = _mm512_i32logather_pd (n2, table, sizeof(double));   // r = 1/n
+//        __m512d r3 = _mm512_i32logather_pd (n3, table, sizeof(double));   // r = 1/n
+    __m512d r = _mm512_set1_pd(1);
+    __m512d r2 = _mm512_set1_pd(1);
+    __m512d r3 = _mm512_set1_pd(1);
+
+    __m512d y = _mm512_fmadd_pd(r, bprime, minus1);  //  y = b*2^(k-x)/n-1
+    __m512d y2 = _mm512_fmadd_pd(r2, bprime2, minus1);  //  y = b*2^(k-x)/n-1
+    __m512d y3 = _mm512_fmadd_pd(r3, bprime3, minus1);  //  y = b*2^(k-x)/n-1
+    r = _mm512_mul_pd(r, kmx.d);   // r = 2^(k-x)/n
+    r2 = _mm512_mul_pd(r2, kmx2.d);   // r = 2^(k-x)/n
+    r3 = _mm512_mul_pd(r3, kmx3.d);   // r = 2^(k-x)/n
+    c = _mm512_mul_pd(r, a); //  c = a*2^(k-x)/n
+    c2 = _mm512_mul_pd(r2, a2); //  c = a*2^(k-x)/n
+    c3 = _mm512_mul_pd(r3, a3); //  c = a*2^(k-x)/n
+    c = _mm512_fnmadd_pd(c, y, c); // c = a*2(k-x)/n*(1-y)
+    c2 = _mm512_fnmadd_pd(c2, y2, c2); // c = a*2(k-x)/n*(1-y)
+    c3 = _mm512_fnmadd_pd(c3, y3, c3); // c = a*2(k-x)/n*(1-y)
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        y2 = _mm512_mul_pd(y2, y2);
+        y3 = _mm512_mul_pd(y3, y3);
+        c = _mm512_fmadd_pd(c, y, c);
+        c2 = _mm512_fmadd_pd(c2, y2, c2);
+        c3 = _mm512_fmadd_pd(c3, y3, c3);
+    }
+    /*
+            m512di kmx2; kmx2.d = b2;
+            kmx2.i = _mm512_and_epi64(kmx2.i, mask_pow); // kmx.f = 2^x
+            kmx2.i = _mm512_sub_epi64(ka1023, kmx2.i);  // kmx.f = 2^(k-x)
+            __m512d bprime2 = _mm512_mul_pd(b2,kmx2.d);  // bprime = b*2^(k-x)
+            __m512i n2 = _mm512_cvtfxpnt_roundpd_epu32lo(bprime2, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+            __m512d r2 = _mm512_i32logather_pd (n2, table, sizeof(double));   // r = 1/n
+            __m512d y2 = _mm512_fmadd_pd(r2, bprime2, minus1);  //  y = b*2^(k-x)/n-1
+           r2 = _mm512_mul_pd(r2, kmx2.d);   // r = 2^(k-x)/n
+            c2 = _mm512_mul_pd(r2,a2);  //  c = a*2^(k-x)/n
+            c2 = _mm512_fnmadd_pd(c2, y2, c2); // c = a*2(k-x)/n*(1-y)
+            $repeat(k,0,$NEXPANDS){y2=_mm512_mul_pd(y2,y2); c2=_mm512_fmadd_pd(c2,y2,c2); }
+    */
+}
+$end
+
+$subprog RUN() {
+    double m[THREAD_NUM] = {0};
+#pragma offload target(mic) in(m:length(THREAD_NUM) alloc_if(1) free_if(0))
+    {}
+#pragma offload target(mic) nocopy(m)
+    {
+        double table[DIV_TAB_SIZE * 2];
+        for(int i = 0; i < DIV_TAB_SIZE * 2; ++i) table[i] = (double)1.0 / i;
+        _PA_CREATE_TIMER
+        _PA_TIME_NOW
+        #pragma omp parallel num_threads(THREAD_NUM)
+        {
+            int pid = omp_get_thread_num();
+            m[pid] = 0.0;
+#ifdef __MIC__
+            for(int i = 0; i < REPEAT; ++i) {
+                __m512d jv[$NSIMD], xv[$NSIMD];
+                $repeat(k, 0, $NSIMD) {
+                    jv[@k@] = ONE;
+                }
+                __m512d jv2[$NSIMD], xv2[$NSIMD];
+                $repeat(k, 0, $NSIMD) {
+                    jv2[@k@] = ONE;
+                }
+                __m512d jv3[$NSIMD], xv3[$NSIMD];
+                $repeat(k, 0, $NSIMD) {
+                    jv3[@k@] = ONE;
+                }
+                for(int l = 0; l < NITERS; ++l) {
+                    $repeat(k, 0, $NSIMD) {
+                        xv[@k@] = _mm512_set1_pd((double)((i + l) + @k@));
+//						$div_a1b(jv[@k@], xv, jv[@k@]);
+                        jv[@k@] = _mm512_div_pd(jv[@k@], xv[@k@]);
+                        jv2[@k@] = _mm512_div_pd(jv2[@k@], xv2[@k@]);
+                        jv3[@k@] = _mm512_div_pd(jv3[@k@], xv3[@k@]);
+//						$div_ab(jv[@k@], xv[@k@], jv[@k@], table);
+//						$div_ab2(jv[@k@], xv[@k@], jv[@k@], jv2[@k@], xv2[@k@], jv2[@k@], jv3[@k@], xv3[@k@], jv3[@k@], table);
+                    }
+                } $repeat(k, 0, $NSIMD) {
+                    m[pid] += _mm512_reduce_add_pd(jv[@k@]) + _mm512_reduce_add_pd(jv2[@k@]) + _mm512_reduce_add_pd(jv3[@k@]);
+                }
+#endif
+            }
+            _PA_TIME_NOW
+            printf("%f Gflops\n", 128.0 * N*THREAD_NUM / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
+        }
+#pragma offload target(mic) out(m:length(THREAD_NUM) alloc_if(0) free_if(1))
+        {}
+    }
+    $end
+
+    $main {
+        for(int i = 0; i < 5; ++i) {
+            $RUN()
+        };
+    }
+
