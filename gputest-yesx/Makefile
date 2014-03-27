@@ -1,5 +1,5 @@
-FILES   := divisionflopsD_error.cu
-TARGET  := divisionflopsD_error.bin
+FILES   := divisionflopsD.cu
+TARGET  := divisionflopsD.bin
 
 NVCC	:= /usr/local/cuda-5.0/bin/nvcc
 ARCH	:= sm_20

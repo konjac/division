@@ -38,6 +38,7 @@ __device__ double divD_fisq(double x, double number)
     d.y  = number;
     d.i  = 0x5fe6eb50c7aa19f9 - ( d.i >> 1 );
     d.y  = d.y * ( 1.5 - ( 0.5 * number * d.y * d.y ) );
+    d.y *= d.y;
 
     // newton
     d.y = d.y * (2 - number * d.y);

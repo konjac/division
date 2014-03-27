@@ -38,6 +38,7 @@ __device__ float divF_fisq(float x, float number)
     d.y  = number;
     d.i  = 0x5f3759df - ( d.i >> 1 );
     d.y  = d.y * ( 1.5F - ( 0.5F * number * d.y * d.y ) );
+    d.y *= d.y;
 
     // newton
     d.y = d.y * (2 - number * d.y);
