@@ -35,22 +35,29 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 
 __device__ float table[TABLE_SIZE];
 
-__device__ void computeTable()
+__global__ void computeTable()
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i=0;i<TABLE_ELEMENT_PER_THREAD)
+    for (int i=0;i<TABLE_ELEMENT_PER_THREAD;i++)
     {
         int j=tid*TABLE_ELEMENT_PER_THREAD+i;
-        if (j==0) table[j]=1.0f; else table[j]=1.0f/j;
+        if (j==0) table[j]=0.0f; else table[j]=TABLE_SIZE/2/((float)j);
     }
 }
 
 __device__ float divF_luit(float x, float number)
 {
-    //TODO
-    float result=1/number;
-    int x=(int)number*TABLE_SIZE;
-    return x*result;
+    int n=(int)(x*TABLE_SIZE/2);
+    float y=x*table[n]-1;
+    float ret=table[n];
+    ret*=1-y;
+    y*=y;
+    ret*=1+y;
+    y*=y;
+    ret*=1-y;
+    y*=y;
+    ret*=1+y;
+    return x*ret;
 }
 
 __device__ float divF_fisq(float x, float number)
@@ -98,6 +105,7 @@ __global__ void funcName() { \
 division(division_fisq, divF_fisq)
 division(division_direct, divF_direct)
 division(division_fdividef, divF_fdividef)
+division(division_luit, divF_luit)
 
 int main(int argc, char* argv[])
 {
@@ -106,7 +114,7 @@ int main(int argc, char* argv[])
 
 
     // pre-compute for table
-    computeTable<<TABLE_BLOCK, TABLE_THREAD>>();
+    computeTable<<<TABLE_BLOCK, TABLE_THREAD>>>();
 
     cudaEvent_t start,stop;
     cudaEventCreate(&start);
@@ -114,8 +122,6 @@ int main(int argc, char* argv[])
 
     float time;
 
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
     cudaEventRecord( start, 0 );
     division_fisq<<<BLOCK_NUM, THREAD_NUM>>>();
     cudaEventRecord( stop, 0 );
@@ -123,8 +129,6 @@ int main(int argc, char* argv[])
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_fisq         time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
     cudaEventRecord( start, 0 );
     division_direct<<<BLOCK_NUM, THREAD_NUM>>>();
     cudaEventRecord( stop, 0 );
@@ -132,14 +136,19 @@ int main(int argc, char* argv[])
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_direct       time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
     cudaEventRecord( start, 0 );
     division_fdividef<<<BLOCK_NUM, THREAD_NUM>>>();
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_fdividef     time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
+
+    cudaEventRecord( start, 0 );
+    division_luit<<<BLOCK_NUM, THREAD_NUM>>>();
+    cudaEventRecord( stop, 0 );
+    cudaEventSynchronize( stop );
+    cudaEventElapsedTime( &time, start, stop );
+    printf("divF_luit   time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
     cudaEventDestroy( start );
     cudaEventDestroy( stop );
