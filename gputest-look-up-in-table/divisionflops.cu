@@ -115,6 +115,7 @@ int main(int argc, char* argv[])
 
     // pre-compute for table
     computeTable<<<TABLE_BLOCK, TABLE_THREAD>>>();
+    gpuErrchk(cudaGetLastError());
 
     cudaEvent_t start,stop;
     cudaEventCreate(&start);
@@ -124,6 +125,7 @@ int main(int argc, char* argv[])
 
     cudaEventRecord( start, 0 );
     division_fisq<<<BLOCK_NUM, THREAD_NUM>>>();
+    gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
     cudaEventElapsedTime( &time, start, stop );
@@ -131,6 +133,7 @@ int main(int argc, char* argv[])
 
     cudaEventRecord( start, 0 );
     division_direct<<<BLOCK_NUM, THREAD_NUM>>>();
+    gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
     cudaEventElapsedTime( &time, start, stop );
@@ -138,6 +141,7 @@ int main(int argc, char* argv[])
 
     cudaEventRecord( start, 0 );
     division_fdividef<<<BLOCK_NUM, THREAD_NUM>>>();
+    gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
     cudaEventElapsedTime( &time, start, stop );
@@ -145,6 +149,7 @@ int main(int argc, char* argv[])
 
     cudaEventRecord( start, 0 );
     division_luit<<<BLOCK_NUM, THREAD_NUM>>>();
+    gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
     cudaEventElapsedTime( &time, start, stop );
