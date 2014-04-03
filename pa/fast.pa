@@ -1,0 +1,242 @@
+#include <omp.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <math.h>
+#include <immintrin.h>
+#include "util.h"
+#define _USE_MIC
+$include "parray.pa"
+int main(int argc, char *argv[]) {
+    _pa_main();
+    return 0;
+}
+#define THREAD_NUM (59*4)
+#define REPEAT (1<<11)  // ideal 1<<12
+#define NDIMS 8
+#define NITERS (256)    // ideal 256
+$var NSIMD(8) 			// ideal 128
+#define PERFORM
+#define N (128)
+$parray {paged double[THREAD_NUM][N]} PAGED
+$parray {micmem double[THREAD_NUM][N]} MIC
+
+#define print(a) { \
+	union { __m512d d; double f[8]; long i[8];}tmp; \
+	tmp.d = a; \
+	printf(#a " = %e(0x%016lx)\n", tmp.f[0], tmp.i[0]); \
+}while(0)
+
+$subprog div_ab(a, b, q) { // 37.584952 Gflops
+    __m512d y;
+    union { __m512i i; __m512d d; } p;
+    p.d = b;
+    p.i = _mm512_sub_epi64(MAGIC, p.i);		// p.i = MAGIC - p.i
+    y = _mm512_fmsub_pd(p.d, b, ONES);		// y = p.d * x - 1
+    q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
+    y = _mm512_mul_pd(y, y);				// y = y * y
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+    y = _mm512_mul_pd(y, y);				// y = y * y
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+    y = _mm512_mul_pd(y, y);				// y = y * y
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+	q = _mm512_mul_pd(a, q);				// q = q * a
+}
+$end
+
+// better performance 
+$subprog div_ab2(a, b, q, a2, b2, q2) { // 47.078668 Gflops
+    __m512d y, y2;
+    union { __m512i i; __m512d d; } p, p2;
+    p.d = b;
+	p2.d = b2;
+    p.i = _mm512_sub_epi32(MAGIC, p.i);		// p.i = MAGIC - p.i
+	p2.i = _mm512_sub_epi32(MAGIC, p2.i);
+    y = _mm512_fmsub_pd(p.d, b, ONES);		// y = p.d * x - 1
+	y2 = _mm512_fmsub_pd(p2.d, b2, ONES);
+    q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
+    q2 = _mm512_fnmadd_pd(p2.d, y2, p2.d);
+    y = _mm512_mul_pd(y, y);				// y = y * y
+    y2 = _mm512_mul_pd(y2, y2);	
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+    q2 = _mm512_fmadd_pd(q2, y2, q2);
+    y = _mm512_mul_pd(y, y);				// y = y * y
+	y2 = _mm512_mul_pd(y2, y2);
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+	q2 = _mm512_fmadd_pd(q2, y2, q2);
+    y = _mm512_mul_pd(y, y);				// y = y * y
+	y2 = _mm512_mul_pd(y2, y2);
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+	q2 = _mm512_fmadd_pd(q2, y2, q2);
+	q = _mm512_mul_pd(a, q);				// q = q * a
+	q2 = _mm512_mul_pd(a2, q2);
+}
+$end
+
+$subprog div_ab3(a, b, q, a2, b2, q2, a3, b3, q3) { // 46.265219 Gflops
+    __m512d y, y2, y3;
+    union { __m512i i; __m512d d; } p, p2, p3;
+    p.d = b;
+	p2.d = b2;
+    p.i = _mm512_sub_epi32(MAGIC, p.i);		// p.i = MAGIC - p.i
+	p2.i = _mm512_sub_epi32(MAGIC, p2.i);
+	p3.i = _mm512_sub_epi32(MAGIC, p3.i);
+    y = _mm512_fmsub_pd(p.d, b, ONES);		// y = p.d * x - 1
+	y2 = _mm512_fmsub_pd(p2.d, b2, ONES);
+	y3 = _mm512_fmsub_pd(p3.d, b3, ONES);
+    q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
+    q2 = _mm512_fnmadd_pd(p2.d, y2, p2.d);
+    q3 = _mm512_fnmadd_pd(p3.d, y3, p3.d);
+    y = _mm512_mul_pd(y, y);				// y = y * y
+    y2 = _mm512_mul_pd(y2, y2);	
+    y3 = _mm512_mul_pd(y3, y3);	
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+    q2 = _mm512_fmadd_pd(q2, y2, q2);
+    q3 = _mm512_fmadd_pd(q3, y3, q3);
+    y = _mm512_mul_pd(y, y);				// y = y * y
+	y2 = _mm512_mul_pd(y2, y2);
+	y3 = _mm512_mul_pd(y3, y3);
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+	q2 = _mm512_fmadd_pd(q2, y2, q2);
+	q3 = _mm512_fmadd_pd(q3, y3, q3);
+    y = _mm512_mul_pd(y, y);				// y = y * y
+	y2 = _mm512_mul_pd(y2, y2);
+	y3 = _mm512_mul_pd(y3, y3);
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+	q2 = _mm512_fmadd_pd(q2, y2, q2);
+	q3 = _mm512_fmadd_pd(q3, y3, q3);
+	q = _mm512_mul_pd(a, q);				// q = q * a
+	q2 = _mm512_mul_pd(a2, q2);
+	q3 = _mm512_mul_pd(a3, q3);
+}
+$end
+
+$subprog RUN() {
+#pragma offload target(mic) nocopy(m)
+    {
+        _PA_CREATE_TIMER
+        _PA_TIME_NOW
+        #pragma omp parallel num_threads(THREAD_NUM)
+        {
+#ifdef __MIC__
+            int pid = omp_get_thread_num();
+            const __m512i MAGIC = _mm512_set1_epi64(0x7fde5f73aabb2400);
+            const __m512d ONES = _mm512_set1_pd(1.0);
+            $repeat(k, 0, $NSIMD) {
+				__m512d x@k@ = _mm512_set1_pd((double)(pid + @k@));
+				__m512d y@k@ = _mm512_set1_pd((double)(pid + @k@));
+				__m512d z@k@ = _mm512_set1_pd((double)(pid + @k@));
+			}
+            for(int i = 0; i < REPEAT*NITERS*NDIMS; i += NDIMS) {
+                $repeat(k, 0, $NSIMD) {{
+                    __m512d q = x@k@, q2 = y@k@, q3 = z@k@;
+					$div_ab(ONES, q, x@k@)		// x@k@ <- 1 / x@k@, 37.875801
+//					$div_ab2(ONES, q, x@k@, ONES, q2, y@k@)	// 	47.090582
+//					$div_ab3(ONES, q, x@k@, ONES, q2, y@k@, ONES, q3, z@k@)		
+//					x@k@ = _mm512_div_pd(ONES, q);	// 14.572320
+//					x@k@ = _mm512_add_pd(ONES, q);	// 376.909821
+                }}
+            }
+            $repeat(k, 0, $NSIMD) {	
+				m[pid] += _mm512_reduce_add_pd(x@k@);
+//				m[pid] += _mm512_reduce_add_pd(y@k@);
+//				m[pid] += _mm512_reduce_add_pd(z@k@);
+			}
+#endif
+        }
+        _PA_TIME_NOW
+        printf("%f Gflops\n", 1.0 * NDIMS * THREAD_NUM * REPEAT * $NSIMD * NITERS / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
+    }
+}
+$end
+
+$subprog TEST() {
+#pragma offload target(mic) nocopy(m,data)
+    {
+        _PA_CREATE_TIMER
+        _PA_TIME_NOW
+        #pragma omp parallel num_threads(THREAD_NUM)
+        {
+#ifdef __MIC__
+            int pid = omp_get_thread_num();
+			m[pid] = 0.0;
+            const __m512i MAGIC = _mm512_set1_epi64(0x7fde5f73aabb2400);
+            const __m512d ONES = _mm512_set1_pd(1.0);
+			double* start = data+pid*128;
+			__m512d r = _mm512_set1_pd(0);
+			for(int i = 0; i < N; i+=8){
+				__m512d x = _mm512_load_pd(start+i);
+				for(int j = 0; j < N; ++j){
+					__m512d y = _mm512_set1_pd(start[j]);
+					y = _mm512_sub_pd(x, y);
+					y = _mm512_fmadd_pd(y, y, ONES);
+//					y = _mm512_div_pd(ONES, y);
+					$div_ab(ONES, y, y);
+					r = _mm512_add_pd(y, r);
+				}
+			}
+			m[pid] = _mm512_reduce_add_pd(r);
+//			printf("%e\n", m[pid]);
+#endif
+        }
+        _PA_TIME_NOW
+        printf("%f Gflops\n", 1.0 * THREAD_NUM * N * N / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
+    }
+}
+$end
+
+#ifdef __MIC__
+typedef union { double f[8]; __m512d v; } simd_t;
+#endif
+$main {
+#ifdef PERFORM
+    $create PAGED(m)
+	$create PAGED(data)
+    $malloc MIC(m)
+	$malloc MIC(data)
+    $copy PAGED(m) to MIC(m)
+	for(int i = 0; i < N * THREAD_NUM;++i)
+		data[i] = (i + 1.0)*100/(N * THREAD_NUM);
+	double cpu_result = 0.0;
+	for(int pid = 0; pid < 1; ++pid){
+		double* start = data+pid*128;
+		for(int i=0;i<8;++i){
+			for(int j=0;j<8;++j){
+				double y = start[i]-start[j];
+				cpu_result += 1.0/(1.0+y*y);
+			}
+		}
+	}
+    $copy PAGED(data) to MIC(data)
+    for(int i = 0; i < 5; ++i) {
+		$TEST()
+    }
+    $copy MIC(m) to PAGED(m)
+	printf("cpu_result = %g, ans[0] = %g\n", cpu_result, m[0]);
+    $destroy PAGED(m)
+	$destroy PAGED(data)
+    $destroy MIC(m)
+	$destroy MIC(data)
+#else
+    $for mic[1]{
+#ifdef __MIC__
+        const __m512i MAGIC = _mm512_set1_epi64(0x7fde5f73aabb2400);
+        const __m512d ONES = _mm512_set1_pd(1.0);
+        simd_t x, z, res, res0;
+        srand(time(NULL));
+        for(int i = 0; i < 8; ++i) {
+            x.f[i] = rand() * 1.0 / RAND_MAX + rand();
+        	z.f[i] = rand() * 1.0 / RAND_MAX;
+        }
+        $div_ab(z.v, x.v, res.v);
+		res0.v = _mm512_div_pd(z.v, x.v);
+        for(int i = 0; i < 8; ++i) {
+            printf("z/x = %.20e / %.20e\n", z.f[i], x.f[i]);
+            printf("\tz/x res = %.20e\n", res.f[i]);
+            printf("\tz/x std = %.20e\n", z.f[i] / x.f[i]);
+            printf("\tz/x mic = %.20e\n", res0.f[i]);
+        }
+#endif
+    }
+#endif
+}
+
