@@ -1,0 +1,137 @@
+#include <omp.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <math.h>
+#include <immintrin.h>
+#include "util.h"
+#define _USE_MIC
+$include "parray.pa"
+int main(int argc, char *argv[]) {
+    _pa_main();
+    return 0;
+}
+#define THREAD_NUM (59*4)
+#define REPEAT (1<<7)  // ideal 1<<12
+#define NDIMS 8
+#define NITERS (256)    // ideal 256
+$var NSIMD(4) 			// ideal 128
+$var NEXPANDS(2)
+//#define DIV_TAB_SIZE 512
+#define DIV_TAB_SIZE 4
+//#define KA1023 0x8070000000000000
+#define KA1023 0x80b0000000000000
+#define PERFORM
+#define N (1<<15)
+typedef union {
+    __m512d d;
+    __m512i i;
+} m512di;
+$parray {paged double[THREAD_NUM][[N / 8][8]]} PAGED
+$parray {micmem double[THREAD_NUM][[N / 8][8]]} MIC
+
+$subprog div_a1b(a, b, c) {
+    __m512d y = b;
+    c = _mm512_fnmadd_pd(a, y, a);
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        c = _mm512_fmadd_pd(c, y, c);
+    }
+}
+$end
+$subprog div_ab(a, b, c, table) {  // if take a*2^k and b*2^k, we can save the first scaling
+    const __m512i minus1 = _mm512_set1_pd(-1.0);
+    const __m512i mask_pow =  _mm512_set1_epi64(0xfff0000000000000);
+    const __m512i ka1023 =  _mm512_set1_epi64(KA1023);
+
+    m512di kmx;
+    kmx.d = b;
+    kmx.i = _mm512_and_epi64(kmx.i, mask_pow); // kmx.f = 2^x
+    kmx.i = _mm512_sub_epi64(ka1023, kmx.i);  // kmx.f = 2^(k-x)
+    __m512d bprime = _mm512_mul_pd(b, kmx.d); // bprime = b*2^(k-x)
+    __m512i n = _mm512_cvtfxpnt_roundpd_epu32lo(bprime, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+    __m512d r = _mm512_i32logather_pd(n, table, sizeof(double));    // r = 1/n
+    __m512d y = _mm512_fmadd_pd(r, bprime, minus1);  //  y = b*2^(k-x)/n-1
+    r = _mm512_mul_pd(r, kmx.d);   // r = 2^(k-x)/n
+    c = _mm512_mul_pd(r, a); //  c = a*2^(k-x)/n
+    c = _mm512_fnmadd_pd(c, y, c); // c = a*2(k-x)/n*(1-y)
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        c = _mm512_fmadd_pd(c, y, c);
+    }
+}
+$end
+
+$subprog RUN()
+#pragma offload target(mic) nocopy(x,y)
+{
+    double table[DIV_TAB_SIZE * 2];
+    for(int i = 0; i < DIV_TAB_SIZE * 2; ++i) table[i] = (double)1.0 / i;
+    _PA_CREATE_TIMER
+    _PA_TIME_NOW
+    #pragma omp parallel num_threads(THREAD_NUM)
+    {
+        int pid = omp_get_thread_num();
+#ifdef __MIC__
+        double sum = 0.0;
+        const __m512d ONE = _mm512_set1_pd(1.0);
+        if(0) {
+            double *x0 = x + N * pid, *y0 = y + N * pid;
+            for(int i = 0; i < N; i += 128 * 8, x0 += 128 * 8, y0 += 128 * 8)
+                for(int k = 0; k < 128 * 8; k += 8) {
+                    __m512d b = _mm512_load_pd(x0 + k);
+                    __m512d s = _mm512_set1_pd(0.0);
+                    for(int q = 0; q < 128 * 8; q += 8) {
+                        __m512d a = _mm512_load_pd(x0 + q);
+                        a = _mm512_sub_pd(b, a);
+                        a = _mm512_fmadd_pd(a, a, ONE);
+                        __m512d c;
+                        $div_ab(ONE, a, c, table)	s = _mm512_add_pd(s, c);
+                    }
+                    _mm512_store_pd(y0 + k, s);
+                }
+        }
+#endif
+    }
+    _PA_TIME_NOW
+    printf("%f Gflops\n", 128.0 * N * THREAD_NUM / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
+}
+$end
+
+
+$main {
+    $create PAGED(x, y, z)
+    for(int i = 0; i < N; ++i) x[i] = rand() * 1. / RAND_MAX + 1.0;
+    for(int pid = 0; pid < THREAD_NUM; ++pid) {
+        double* x0 = x + pid * N, *z0 = z + pid * N;
+        for(int i = 0; i < N; i += 128 * 8, x0 += 128 * 8, z0 += 128 * 8)
+            for(int k = 0; k < 128 * 8; k += 8) {
+                double b[8];
+                for(int j = 0; j < 8; ++j) {
+                    b[j] = x0[k + j];
+                    z0[k + j] = 0.0;
+                }
+                for(int q = 0; q < 128 * 8; q += 8) {
+                    double a[8];
+                    for(int j = 0; j < 8; ++j) {
+                        a[j] = x0[q + j];
+                        a[j] = a[j] - b[j];
+                        a[j] = a[j] * a[j] + 1;
+                        a[j] = 1. / a[j];
+                        z0[k + j] += a[j];
+                    }
+                }
+            }
+    }
+    $malloc MIC(x)
+    $malloc MIC(y)
+    $copy PAGED(x) to MIC(x)
+    for(int i = 0; i < 5; ++i) {
+        $RUN()
+    };
+    $copy MIC(y) to PAGED(y)
+    printf("%f\n", y[0]);
+    printf("%f\n", z[0]);
+    $destroy PAGED(x, y, z)
+    $destroy MIC(x, y)
+}
+

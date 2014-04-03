@@ -1,0 +1,135 @@
+#include <omp.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <math.h>
+#include <immintrin.h>
+#include "util.h"
+#define _USE_MIC
+$include "parray.pa"
+int main(int argc, char *argv[]) {
+    _pa_main();
+    return 0;
+}
+#define THREAD_NUM (59*4)
+#define REPEAT (1<<7)  // ideal 1<<12
+#define NDIMS 8
+#define NITERS (256)    // ideal 256
+$var NSIMD(4)			// ideal 128
+$var NEXPANDS(2)
+//#define DIV_TAB_SIZE 512
+#define DIV_TAB_SIZE 4
+//#define KA1023 0x8070000000000000
+#define KA1023 0x80b0000000000000
+#define PERFORM
+#define N (1<<15)
+typedef union {
+    __m512d d;
+    __m512i i;
+} m512di;
+$parray {paged double[THREAD_NUM][[N / 8][8]]} PAGED
+$parray {micmem double[THREAD_NUM][[N / 8][8]]} MIC
+
+$subprog div_a1b(a, b, c) {
+    __m512d y = b;
+    c = _mm512_fnmadd_pd(a, y, a);
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        c = _mm512_fmadd_pd(c, y, c);
+    }
+}
+$end
+$subprog div_ab(a, b, c, table) {  // if take a*2^k and b*2^k, we can save the first scaling
+    const __m512i minus1 = _mm512_set1_pd(-1.0);
+    const __m512i mask_pow =  _mm512_set1_epi64(0xfff0000000000000);
+    const __m512i ka1023 =  _mm512_set1_epi64(KA1023);
+
+    m512di kmx;
+    kmx.d = b;
+    kmx.i = _mm512_and_epi64(kmx.i, mask_pow); // kmx.f = 2^x
+    kmx.i = _mm512_sub_epi64(ka1023, kmx.i);  // kmx.f = 2^(k-x)
+    __m512d bprime = _mm512_mul_pd(b, kmx.d); // bprime = b*2^(k-x)
+    __m512i n = _mm512_cvtfxpnt_roundpd_epu32lo(bprime, _MM_FROUND_TO_NEG_INF);  // n=[b*2^(k-x)]
+    __m512d r = _mm512_i32logather_pd(n, table, sizeof(double));    // r = 1/n
+    __m512d y = _mm512_fmadd_pd(r, bprime, minus1);  //  y = b*2^(k-x)/n-1
+    r = _mm512_mul_pd(r, kmx.d);   // r = 2^(k-x)/n
+    c = _mm512_mul_pd(r, a); //  c = a*2^(k-x)/n
+    c = _mm512_fnmadd_pd(c, y, c); // c = a*2(k-x)/n*(1-y)
+    $repeat(k, 0, $NEXPANDS) {
+        y = _mm512_mul_pd(y, y);
+        c = _mm512_fmadd_pd(c, y, c);
+    }
+}
+$end
+
+$subprog RUN() {
+    double m[THREAD_NUM] = {0};
+#pragma offload target(mic) in(m:length(THREAD_NUM) alloc_if(1) free_if(0))
+    {}
+#pragma offload target(mic) nocopy(m)
+    {
+        double table[DIV_TAB_SIZE * 2];
+        for(int i = 0; i < DIV_TAB_SIZE * 2; ++i) table[i] = (double)1.0 / i;
+        _PA_CREATE_TIMER
+        _PA_TIME_NOW
+        #pragma omp parallel num_threads(THREAD_NUM)
+        {
+            int pid = omp_get_thread_num();
+            m[pid] = 0.0;
+#ifdef __MIC__
+            double sum = 0.0;
+            /*			union{
+							__m512d d;
+							double f[8];
+						}tablev;*/
+//			tablev.d = _mm512_load_pd(table);
+            for(int i = 1; i < REPEAT*NITERS*NDIMS; i++) {
+//				sum+= 1/((double)(i+pid)/(128*REPEAT*NITERS*$NSIMD*NDIMS)); // 13.X Gflops
+#if 1
+                $repeat(k, 0, $NSIMD) {
+                    float x@k@ = (float)((i + pid)*$NSIMD + @k@) / (128 * REPEAT * NITERS*$NSIMD * NDIMS);
+                    float xscaled@k@ = (x@k@*DIV_TAB_SIZE * 2);
+                    int n@k@ = (int)xscaled@k@;
+//				double r@k@ = table[n@k@];    // 37.2 Gflops
+                    double r@k@ = xscaled@k@;     // 22.6 Gflops
+                    double y@k@ = xscaled@k@*r@k@ -1;
+                    double c@k@ = DIV_TAB_SIZE * 2 * r@k@*(1 - y@k@);
+
+//				double c@k@ = 1-y@k@;
+                    y@k@ *= y@k@;
+                    c@k@ += c@k@*y@k@;
+                    y@k@ *= y@k@;
+                    sum += c@k@*y@k@;
+                }
+#endif
+#if 0
+                double x = (double)(i + pid) / (128 * REPEAT * NITERS*$NSIMD * NDIMS) + 0.5;
+                double xscaled = x * DIV_TAB_SIZE * 2;
+                int n = (int)xscaled;
+                double r = tablev.f[n];
+                double y = xscaled * r - 1;
+                double c = DIV_TAB_SIZE * 2 * r * (1 - y);
+                y *= y;
+                c += c * y;
+                y *= y;
+                c += c * y;
+                y *= y;
+                sum += c * y;
+#endif
+            }
+            m[pid] = sum;
+#endif
+        }
+        _PA_TIME_NOW
+        printf("%f Gflops\n", 1.0 * NDIMS * THREAD_NUM * REPEAT * ($NSIMD * NITERS) / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
+    }
+#pragma offload target(mic) out(m:length(THREAD_NUM) alloc_if(0) free_if(1))
+    {}
+}
+$end
+
+$main {
+    for(int i = 0; i < 5; ++i) {
+        $RUN()
+    };
+}
+

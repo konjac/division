@@ -1,0 +1,108 @@
+#include <stdio.h>
+#include <immintrin.h>
+#include <omp.h>
+
+#define THREAD_NUM (59*4)
+#define REPEAT (1<<17)
+#define LOOP 1
+#define NITERS 32
+#define NPAR 8
+#define NDIMS 8
+
+double flops(double t) {
+    return
+        1.0 * NDIMS * THREAD_NUM * REPEAT * LOOP * (NPAR * NITERS) / t / 1e9;
+}
+
+#define RUN1(x) x;
+#define RUN2(x) x; x;
+#define RUN3(x) RUN2(x) x;
+#define RUN4(x) RUN2(x) RUN2(x);
+#define RUN5(x) RUN4(x) x;
+#define RUN6(x) RUN4(x) RUN2(x);
+#define RUN7(x) RUN4(x) RUN3(x);
+#define RUN8(x) RUN4(x) RUN4(x);
+
+#define DIV8(a, b, c) { \
+	__m512d y = b; \
+	c = _mm512_fnmadd_pd(a, y, a); \
+	RUN5(\
+		y = _mm512_mul_pd(y, y); \
+		c = _mm512_fmadd_pd(c, y, c);\
+	); \
+}
+
+// using fast inverse square root
+// parameters: c = a / b
+#define div_fisr(a, b, c) { \
+	__m512i ii = _mm512_castpd_si512(b); \
+	ii = _mm512_sub_epi64(magic, _mm512_srlv_epi64(ii, ones)); \
+	__m512d y = _mm512_castsi512_pd(ii); \
+	y = _mm512_mul_pd(y, \
+			_mm512_sub_pd(threehalfs, \
+				_mm512_mul_pd(halfs, \
+					_mm512_mul_pd(b, \
+						_mm512_mul_pd(y, y))))); \
+	y = _mm512_mul_pd(y, _mm512_sub_pd(twos, _mm512_mul_pd(b, y))); \
+	y = _mm512_mul_pd(y, _mm512_sub_pd(twos, _mm512_mul_pd(b, y))); \
+	c = _mm512_mul_pd(a, y); \
+}
+
+// this won't work
+__attribute__((target(mic)))
+inline void div8(__m512d &a, __m512d &b, __m512d &c) {
+	__m512d y = b;	
+	c = _mm512_fnmadd_pd(a, y, a);
+
+	#pragma unroll(5)
+	for (int i = 0; i < 5; i++) {
+		y = _mm512_mul_pd(y, y);
+		c = _mm512_fmadd_pd(c, y, c);
+	}
+}
+
+void fmadd_intrin() {
+    double m[THREAD_NUM] = {};
+    double t1 = omp_get_wtime();
+	#pragma offload target(mic) nocopy(m)
+    {
+		// define some constants
+		__m512i magic = _mm512_set1_epi64(0x5fe6eb50c7aa19f9); 
+		__m512i ones = _mm512_set1_epi64(1); 
+		__m512d halfs = _mm512_set1_pd(0.5);
+		__m512d threehalfs = _mm512_set1_pd(1.5);
+		__m512d twos = _mm512_set1_pd(2.0);
+
+        #pragma omp parallel num_threads(THREAD_NUM)
+        {
+            int pid = omp_get_thread_num();
+            double x = pid / 10000.0 + 1;
+            m[pid] = 0.0;
+            __m512d jdv = _mm512_set_pd(0., 1., 2., 3., 4., 5., 6., 7.);
+            __m512d xv = _mm512_set1_pd(x);
+            for(int i = 0; i < REPEAT; ++i) {
+                __m512d jv[NPAR];
+#pragma unroll
+                for(int k = 0; k < NPAR; k++) 
+					jv[k] = _mm512_set1_pd(i);
+#pragma unroll
+                for(int k = 0; k < NITERS; k++) {
+#pragma unroll
+                    for(int l = 0; l < NPAR; l++){
+						div_fisr(jv[l], xv, jv[l]);
+					}
+                }
+#pragma unroll
+                for(int k = 0; k < NPAR; k++)
+                    m[pid] += _mm512_reduce_add_pd(jv[k]);
+            }
+        }
+    }
+    double t2 = omp_get_wtime();
+    printf("%-30sflops = %f Gflops\n", __FUNCTION__, flops(t2 - t1));
+}
+
+int main(int argc, char* argv[]) {
+    for(int i = 0; i < 10; ++i) 
+		fmadd_intrin();
+}
