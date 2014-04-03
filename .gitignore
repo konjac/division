@@ -3,3 +3,7 @@
 *.S
 *.mic
 tmp/
+*.o
+*.s
+*.swp
+*.swo
