@@ -23,5 +23,3 @@ $$
 &(\dfrac{1}{n} \text{or} \dfrac{2^k}{n}  \text{can be preprocessed})
 \end{align}
 $$
-
-
