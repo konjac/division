@@ -47,14 +47,14 @@ __global__ void computeTable()
 
 __device__ float divF_luit(float x, float number)
 {
-    int n=(int)(x*TABLE_SIZE/2);
-    float y=x*table[n]-1;
+    int n=(int)(number*TABLE_SIZE/2);
+    float y=number*table[n]-1;
     float ret=table[n];
     ret*=1-y;
     y*=y;
     ret*=1+y;
     y*=y;
-    ret*=1-y;
+    ret*=1+y;
     y*=y;
     ret*=1+y;
     return x*ret;
@@ -86,7 +86,8 @@ __device__ float divF_fisq(float x, float number)
 #define division(funcName, divF) \
 __global__ void funcName() { \
     int tid = blockIdx.x * blockDim.x + threadIdx.x; \
-	float x = tid; \
+	float x = tid/1000000.0; \
+	m[tid] = 0.0; \
     for (int i = 0; i < ITERATION_PER_THREAD; i++) { \
 		x += 0.0001; \
         float p1 = i + 20001.0f; \
@@ -125,17 +126,17 @@ int main(int argc, char* argv[])
 
     cudaEventRecord( start, 0 );
     division_fisq<<<BLOCK_NUM, THREAD_NUM>>>();
-    gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
+    gpuErrchk(cudaGetLastError());
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_fisq         time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
     cudaEventRecord( start, 0 );
     division_direct<<<BLOCK_NUM, THREAD_NUM>>>();
-    gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
+    gpuErrchk(cudaGetLastError());
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_direct       time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
@@ -144,6 +145,7 @@ int main(int argc, char* argv[])
     gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
+    gpuErrchk(cudaGetLastError());
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_fdividef     time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
@@ -152,6 +154,7 @@ int main(int argc, char* argv[])
     gpuErrchk(cudaGetLastError());
     cudaEventRecord( stop, 0 );
     cudaEventSynchronize( stop );
+    gpuErrchk(cudaGetLastError());
     cudaEventElapsedTime( &time, start, stop );
     printf("divF_luit   time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
