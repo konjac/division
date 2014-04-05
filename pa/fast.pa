@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {   _pa_main();   return 0;}
 #define NITERS (256)    // ideal 256
 $var NSIMD(4) 			// ideal 4
 #define PERFORM
-#define N (128)
+#define N (256)
 $parray {paged double[THREAD_NUM][N]} PAGED
 $parray {micmem double[THREAD_NUM][N]} MIC
 
@@ -25,15 +25,15 @@ $subprog div_ab(a, b, c) { // y^8: 64-bit sub: 37.584952 Gflops  32-bit sub: 43.
     q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
     y = _mm512_mul_pd(y, y);				// y = y * y
     q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-//    y = _mm512_mul_pd(y, y);				// y = y * y
-//    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-    y = _mm512_fmadd_pd(y, y, ONES);				// y = y * y  (y = y * y + 1 is even faster!!)
+    y = _mm512_mul_pd(y, y);				// y = y * y
+    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
+    y = _mm512_mul_pd(y, y);				// y = y * y  (y = y * y + 1 is even faster!!)
     q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
 	c = _mm512_mul_pd(a, q);				// q = q * a
 }
 $end
 
-$var NN(1)
+$var NN(4)
 
 $subprog div_abn(a, b, c){
     $repeat(k, 0, $NN){__m512d y@k@, q@k@;}
@@ -46,8 +46,8 @@ $subprog div_abn(a, b, c){
     $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
     $repeat(k, 0, $NN){ y@k@ = _mm512_mul_pd(y@k@, y@k@);}				// y = y * y
     $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
-//    $repeat(k, 0, $NN){ y@k@ = _mm512_mul_pd(y@k@, y@k@);}				// y = y * y
-//    $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
+    $repeat(k, 0, $NN){ y@k@ = _mm512_mul_pd(y@k@, y@k@);}				// y = y * y
+    $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
 	$repeat(k, 0, $NN){ c@k@ = _mm512_mul_pd(a@k@, q@k@); }				// q = q * e	
 }
 $end
@@ -87,7 +87,7 @@ $subprog TEST() {
 			m[pid] = 0.0;
             const __m512i MAGIC = _mm512_set1_epi64(0x7fde5f73aabb2400);
             const __m512d ONES = _mm512_set1_pd(1.0);
-			double* start = data+pid*128;__m512d r = _mm512_set1_pd(0);
+			double* start = data+pid*N;__m512d r = _mm512_set1_pd(0);
 			for(int i = 0; i < N; i+=8){
 				__m512d x = _mm512_load_pd(start+i);
 				if(0)for(int j = 0; j < N; ++j){
@@ -98,25 +98,24 @@ $subprog TEST() {
 					$div_ab(ONES, t, t);				// 20.580960 Gflops
 					r = _mm512_add_pd(t, r);
 				}
-				if(1)for(int j = 0; j < N; j+=2){
-					__m512d t = _mm512_set1_pd(start[j]);
-					__m512d s = _mm512_set1_pd(start[j+1]);
-					t = _mm512_sub_pd(x, t);
-					s = _mm512_sub_pd(x, s);
-					t = _mm512_fmadd_pd(t, t, ONES);
-					s = _mm512_fmadd_pd(s, s, ONES);
+				if(1)for(int j = 0; j < N; j+=$NN){
+					$repeat(l, 0, $NN) {__m512d t@l@ = _mm512_set1_pd(start[j+@l@]);}
+					$repeat(l, 0, $NN) {t@l@ = _mm512_sub_pd(x, t@l@);}
+					$repeat(l, 0, $NN) {t@l@ = _mm512_fmadd_pd(t@l@, t@l@, ONES);}
+					$repeat(l, 0, $NN) {__m512d s@l@ = ONES;}
 //					t = _mm512_div_pd(ONES, t);
 //					s = _mm512_div_pd(ONES, s);			// 12.932852 Gflops
-					$div_ab2(ONES, t, t, ONES, s, s);	// 28.452275 Gflops 31.429838 Gflops
-					r = _mm512_add_pd(t, r);
-					r = _mm512_add_pd(s, r);
+//					$div_ab2(ONES, t, t, ONES, s, s);	// 28.452275 Gflops 31.429838 Gflops
+//					$repeat(l, 0, $NN) {t@l@ = _mm512_div_pd(s@l@, t@l@);}
+					$div_abn(s, t, t);
+					$repeat(l, 0, $NN) {r = _mm512_add_pd(t@l@, r);}
 				}
 			}
 			m[pid] = _mm512_reduce_add_pd(r);
 #endif
         }
         _PA_TIME_NOW
-		printf("%e s\n", ((double)_PA_TIME_DIFF(1, 2)));
+		printf("%f ms,", 1000.0*((double)_PA_TIME_DIFF(1, 2)));
         printf("%f Gflops\n", 1.0 * THREAD_NUM * N * N / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
     }
 }
@@ -134,20 +133,20 @@ $main {
 		data[i] = (i + 1.0)*100/(N * THREAD_NUM);
 	double cpu_result = 0.0;
 	for(int pid = 0; pid < THREAD_NUM; ++pid){
-		double* start = data+pid*128;
+		double* start = data+pid*N;
 		for(int i=0;i<N;++i){
 			for(int j=0;j<N;++j){
 				double y = start[i]-start[j];
 				cpu_result += 1.0/(1.0+y*y);}}}
     $copy PAGED(data) to MIC(data)
     for(int i = 0; i < 5; ++i) {
-//		$TEST()
-		$RUN()
+		$TEST()
+//		$RUN()
     }
     $copy MIC(m) to PAGED(m)
 	double ans = 0.0;
 	for(int pid = 0; pid < THREAD_NUM; ++pid) ans += m[pid];
-	printf("cpu = %.20e\nans = %.20e\n", cpu_result, ans);
+	printf(" == std %.20e\n == ans %.20e\n", cpu_result, ans);
     $destroy PAGED(m), PAGED(data), MIC(m), MIC(data)
 #else
     $for mic[1]{
