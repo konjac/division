@@ -6,31 +6,21 @@
 #include "util.h"
 #define _USE_MIC
 $include "parray.pa"
-int main(int argc, char *argv[]) {
-    _pa_main();
-    return 0;
-}
+int main(int argc, char *argv[]) {   _pa_main();   return 0;}
 #define THREAD_NUM (59*4)
-#define REPEAT (1<<11)  // ideal 1<<12
+#define REPEAT (1<<11)  // ideal 1<<11
 #define NDIMS 8
 #define NITERS (256)    // ideal 256
-$var NSIMD(4) 			// ideal 128
+$var NSIMD(4) 			// ideal 4
 #define PERFORM
 #define N (128)
 $parray {paged double[THREAD_NUM][N]} PAGED
 $parray {micmem double[THREAD_NUM][N]} MIC
 
-#define print(a) { \
-	union { __m512d d; double f[8]; long i[8];}tmp; \
-	tmp.d = a; printf(#a " = %e(0x%016lx)\n", tmp.f[0], tmp.i[0]); \
-}while(0)
-
 $subprog div_ab(a, b, c) { // y^8: 64-bit sub: 37.584952 Gflops  32-bit sub: 43.564720 Gflops
 						   // y^4:								 32-bit sub: 52.946531 Gflops
-    __m512d y;
-    union { __m512i i; __m512d d; } p;
-    p.d = b;
-    p.i = _mm512_sub_epi32(MAGIC, p.i);		// p.i = MAGIC - p.i
+    __m512d y, q;  union { __m512i i; __m512d d; } p;
+    p.d = b; p.i = _mm512_sub_epi32(MAGIC, p.i);		// p.i = MAGIC - p.i
     y = _mm512_fmsub_pd(p.d, b, ONES);		// y = p.d * x - 1
     q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
     y = _mm512_mul_pd(y, y);				// y = y * y
@@ -43,129 +33,53 @@ $subprog div_ab(a, b, c) { // y^8: 64-bit sub: 37.584952 Gflops  32-bit sub: 43.
 }
 $end
 
-// better performance 
-$subprog div_ab2(a, b, q, a2, b2, q2) { // 47.078668 Gflops
-    __m512d y, y2;
-    union { __m512i i; __m512d d; } p, p2;
-    p.d = b;
-	p2.d = b2;
-    p.i = _mm512_sub_epi32(MAGIC, p.i);		// p.i = MAGIC - p.i
-	p2.i = _mm512_sub_epi32(MAGIC, p2.i);
-    y = _mm512_fmsub_pd(p.d, b, ONES);		// y = p.d * x - 1
-	y2 = _mm512_fmsub_pd(p2.d, b2, ONES);
-    q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
-    q2 = _mm512_fnmadd_pd(p2.d, y2, p2.d);
-    y = _mm512_mul_pd(y, y);				// y = y * y
-    y2 = _mm512_mul_pd(y2, y2);	
-    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-    q2 = _mm512_fmadd_pd(q2, y2, q2);
-/*    y = _mm512_mul_pd(y, y);				// y = y * y
-	y2 = _mm512_mul_pd(y2, y2);
-    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-	q2 = _mm512_fmadd_pd(q2, y2, q2);
-*/    y = _mm512_mul_pd(y, y);				// y = y * y
-	y2 = _mm512_mul_pd(y2, y2);
-    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-	q2 = _mm512_fmadd_pd(q2, y2, q2);
-	q = _mm512_mul_pd(a, q);				// q = q * a
-	q2 = _mm512_mul_pd(a2, q2);
-}
-$end
+$var NN(1)
 
-$subprog div_ab3(a, b, q, a2, b2, q2, a3, b3, q3) { // 46.265219 Gflops
-    __m512d y, y2, y3;
-    union { __m512i i; __m512d d; } p, p2, p3;
-    p.d = b;
-	p2.d = b2;
-    p.i = _mm512_sub_epi32(MAGIC, p.i);		// p.i = MAGIC - p.i
-	p2.i = _mm512_sub_epi32(MAGIC, p2.i);
-	p3.i = _mm512_sub_epi32(MAGIC, p3.i);
-    y = _mm512_fmsub_pd(p.d, b, ONES);		// y = p.d * x - 1
-	y2 = _mm512_fmsub_pd(p2.d, b2, ONES);
-	y3 = _mm512_fmsub_pd(p3.d, b3, ONES);
-    q = _mm512_fnmadd_pd(p.d, y, p.d);		// q = - p.d * y + p.d
-    q2 = _mm512_fnmadd_pd(p2.d, y2, p2.d);
-    q3 = _mm512_fnmadd_pd(p3.d, y3, p3.d);
-    y = _mm512_mul_pd(y, y);				// y = y * y
-    y2 = _mm512_mul_pd(y2, y2);	
-    y3 = _mm512_mul_pd(y3, y3);	
-    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-    q2 = _mm512_fmadd_pd(q2, y2, q2);
-    q3 = _mm512_fmadd_pd(q3, y3, q3);
-    y = _mm512_mul_pd(y, y);				// y = y * y
-	y2 = _mm512_mul_pd(y2, y2);
-	y3 = _mm512_mul_pd(y3, y3);
-    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-	q2 = _mm512_fmadd_pd(q2, y2, q2);
-	q3 = _mm512_fmadd_pd(q3, y3, q3);
-    y = _mm512_mul_pd(y, y);				// y = y * y
-	y2 = _mm512_mul_pd(y2, y2);
-	y3 = _mm512_mul_pd(y3, y3);
-    q = _mm512_fmadd_pd(q, y, q);			// q = q * y + q
-	q2 = _mm512_fmadd_pd(q2, y2, q2);
-	q3 = _mm512_fmadd_pd(q3, y3, q3);
-	q = _mm512_mul_pd(a, q);				// q = q * a
-	q2 = _mm512_mul_pd(a2, q2);
-	q3 = _mm512_mul_pd(a3, q3);
+$subprog div_abn(a, b, c){
+    $repeat(k, 0, $NN){__m512d y@k@, q@k@;}
+	$repeat(k, 0, $NN){ union { __m512i i; __m512d d; } p@k@;}
+    $repeat(k, 0, $NN){ p@k@.d = b@k@; }
+    $repeat(k, 0, $NN){ p@k@.i = _mm512_sub_epi32(MAGIC, p@k@.i); }		// p.i = MAGIC - p.i
+    $repeat(k, 0, $NN){ y@k@ = _mm512_fmsub_pd(p@k@.d, b@k@, ONES);	}	// y = p.d * x - 1
+    $repeat(k, 0, $NN){ q@k@ = _mm512_fnmadd_pd(p@k@.d, y@k@, p@k@.d);}	// q = - p.d * y + p.d
+    $repeat(k, 0, $NN){ y@k@ = _mm512_mul_pd(y@k@, y@k@);}				// y = y * y
+    $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
+    $repeat(k, 0, $NN){ y@k@ = _mm512_mul_pd(y@k@, y@k@);}				// y = y * y
+    $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
+//    $repeat(k, 0, $NN){ y@k@ = _mm512_mul_pd(y@k@, y@k@);}				// y = y * y
+//    $repeat(k, 0, $NN){ q@k@ = _mm512_fmadd_pd(q@k@, y@k@, q@k@);}		// q = q * y + q
+	$repeat(k, 0, $NN){ c@k@ = _mm512_mul_pd(a@k@, q@k@); }				// q = q * e	
 }
 $end
 
 // auto-vec 27.269131 Gflops
 $subprog RUN() {
 #pragma offload target(mic) nocopy(m)
-    {
-        _PA_CREATE_TIMER         _PA_TIME_NOW
+    { _PA_CREATE_TIMER         _PA_TIME_NOW
         #pragma omp parallel num_threads(THREAD_NUM)
         {
 #ifdef __MIC__
             int pid = omp_get_thread_num();
             const __m512i MAGIC = _mm512_set1_epi64(0x7fde5f73aabb2400);
             const __m512d ONES = _mm512_set1_pd(1.0);
-/*			for(int i = 0; i < REPEAT*NITERS*NDIMS; ++i){
-				double a = 1.0;
-				double b = (double)(pid + i);
-				union{ unsigned long i; double d;} p;
-				p.d = b; p.i = 0x7fde5f73aabb2400UL - p.i;
-				double y = p.d * b - 1; 	double q = p.d * y - p.d;
-				y = y * y;				q = q * y + q;
-				y = y * y;				q = q * y + q;
-				y = y * y;				q = q * y + q;
-				q = a * q;				m[pid] += q;
-			}
-			/**/
-            $repeat(k, 0, $NSIMD) {
-				__m512d x@k@ = _mm512_set1_pd((double)(pid + @k@));
-				__m512d y@k@ = _mm512_set1_pd((double)(pid + @k@+1));
-				__m512d z@k@ = _mm512_set1_pd((double)(pid + @k@+2));
-			}
+            $repeat(l,0,$NSIMD) {$repeat(k,0,$NN) {__m512d x@l@@k@=_mm512_set1_pd((double)(pid+@l@+@k@));}}
             for(int i = 0; i < REPEAT*NITERS*NDIMS; i += NDIMS) {
-                $repeat(k, 0, $NSIMD) {{
-                    __m512d q = x@k@, q2 = y@k@, q3 = z@k@;
-//					$div_ab(ONES, q, x@k@)		// x@k@ <- 1 / x@k@, 37.875801 Gflops
-					$div_ab2(ONES, q, x@k@, ONES, q2, y@k@)	// 	47.090582 Glops
-//					$div_ab3(ONES, q, x@k@, ONES, q2, y@k@, ONES, q3, z@k@)	
-//					x@k@ = _mm512_div_pd(ONES, q);	// 14.572320 Gflops
-//					x@k@ = _mm512_add_pd(ONES, q);	// 376.909821 Gflops
-                }}
-            }
-            $repeat(k, 0, $NSIMD) {	
-				m[pid] += _mm512_reduce_add_pd(x@k@);
-				m[pid] += _mm512_reduce_add_pd(y@k@);
-//				m[pid] += _mm512_reduce_add_pd(z@k@);
-			}/***/
+                $repeat(l,0,$NSIMD) {{
+					$repeat(k,0,$NN) {__m512d s@k@=ONES, q@k@=x@l@@k@;}
+					$div_abn(s, q, x@l@)			// 54.738745 Gflops
+//                  x@l@0 = _mm512_div_pd(s0, q0);  // 16.559894 Gflops
+//					x@l@0 = _mm512_add_pd(s0, q0);	// 297.547590 Gflops
+                }}}
+            $repeat(l,0,$NSIMD) {$repeat(k,0,$NN) {m[pid]+=_mm512_reduce_add_pd(x@l@@k@);}}
 #endif
-        }
-        _PA_TIME_NOW
-        printf("%f Gflops\n", 2.0 * NDIMS * THREAD_NUM * REPEAT * $NSIMD * NITERS / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
-    }
-}
+        }_PA_TIME_NOW
+        printf("%f Gflops\n", 1.0 * $NN * NDIMS * THREAD_NUM * REPEAT * $NSIMD * NITERS / ((double)_PA_TIME_DIFF(1, 2)) / 1e9);
+}}
 $end
 
 $subprog TEST() {
 #pragma offload target(mic) nocopy(m,data)
-    {
-        _PA_CREATE_TIMER
-        _PA_TIME_NOW
+    {   _PA_CREATE_TIMER      _PA_TIME_NOW
         #pragma omp parallel num_threads(THREAD_NUM)
         {
 #ifdef __MIC__
@@ -173,8 +87,7 @@ $subprog TEST() {
 			m[pid] = 0.0;
             const __m512i MAGIC = _mm512_set1_epi64(0x7fde5f73aabb2400);
             const __m512d ONES = _mm512_set1_pd(1.0);
-			double* start = data+pid*128;
-			__m512d r = _mm512_set1_pd(0);
+			double* start = data+pid*128;__m512d r = _mm512_set1_pd(0);
 			for(int i = 0; i < N; i+=8){
 				__m512d x = _mm512_load_pd(start+i);
 				if(0)for(int j = 0; j < N; ++j){
@@ -225,10 +138,7 @@ $main {
 		for(int i=0;i<N;++i){
 			for(int j=0;j<N;++j){
 				double y = start[i]-start[j];
-				cpu_result += 1.0/(1.0+y*y);
-			}
-		}
-	}
+				cpu_result += 1.0/(1.0+y*y);}}}
     $copy PAGED(data) to MIC(data)
     for(int i = 0; i < 5; ++i) {
 //		$TEST()
