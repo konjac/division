@@ -86,10 +86,10 @@ __device__ float divF_fisq(float x, float number)
 #define division(funcName, divF) \
 __global__ void funcName() { \
     int tid = blockIdx.x * blockDim.x + threadIdx.x; \
-	float x = tid/1000000.0; \
+	float x = tid*1e-6f; \
 	m[tid] = 0.0; \
     for (int i = 0; i < ITERATION_PER_THREAD; i++) { \
-		x += 0.0001; \
+		x += 0.0001f; \
         float p1 = i + 20001.0f; \
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.01f), x+0.02f), x+0.03f), x+0.04f), x+0.05f), x+0.06f), x+0.07f), x+0.08f); \
         p1 = divF(divF(divF(divF(divF(divF(divF(divF(p1, x+0.09f), x+0.10f), x+0.11f), x+0.12f), x+0.13f), x+0.14f), x+0.15f), x+0.16f); \
