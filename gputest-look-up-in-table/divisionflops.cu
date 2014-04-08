@@ -33,6 +33,18 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define TABLE_ELEMENT_PER_THREAD 8
 #define TABLE_SIZE (TABLE_BLOCK*TABLE_THREAD*TABLE_ELEMENT_PER_THREAD)
 
+#define USE_CONSTANT_TABLE
+#ifdef USE_CONSTANT_TABLE
+__device__ __constant__ float table[TABLE_SIZE];
+float tableCpu[TABLE_SIZE];
+
+void computeTable()
+{
+	for (int i=0;i<TABLE_SIZE;i++)
+		if (i==0) tableCpu[i]=0.0f; else tableCpu[i]=TABLE_SIZE/2/((float)i);
+	cudaMemcpyToSymbol(table, tableCpu, sizeof(float)*TABLE_SIZE);
+}
+#else
 __device__ float table[TABLE_SIZE];
 
 __global__ void computeTable()
@@ -44,6 +56,7 @@ __global__ void computeTable()
         if (j==0) table[j]=0.0f; else table[j]=TABLE_SIZE/2/((float)j);
     }
 }
+#endif
 
 __device__ float divF_luit(float x, float number)
 {
@@ -115,7 +128,11 @@ int main(int argc, char* argv[])
 
 
     // pre-compute for table
+#ifdef USE_CONSTANT_TABLE
+	computeTable();
+#else
     computeTable<<<TABLE_BLOCK, TABLE_THREAD>>>();
+#endif
     gpuErrchk(cudaGetLastError());
 
     cudaEvent_t start,stop;
