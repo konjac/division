@@ -141,5 +141,22 @@ int main()
         //testF();
         testT();
     }
+    /*
+    union Data{
+        float f;
+        int i;
+    } a;
+    while (1)
+    {
+        scanf("%f",&a.f);
+        printf("f=%e i=%08x\n", a.f, a.i);
+        int e=a.i&0x7f800000;
+        printf("e=%08x e=%d\n", e, e>>23);
+        e=((~(e-0x7f800000))+0x00800000+0x7f800000)&0x7f800000;
+        printf("e=%08x e=%d\n", e, e>>23);
+        a.i=(a.i^(a.i&0x7f800000))|e;
+        printf("f=%e i=%08x\n", a.f, a.i);
+    }
+    */
     return 0;
 }
