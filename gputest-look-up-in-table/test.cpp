@@ -96,40 +96,40 @@ void testD()
 }
 
 #define TABLE_SIZE (1<<12)
-float table[TABLE_SIZE];
+double table[TABLE_SIZE];
 void computeTable()
 {
     for (int i=0;i<TABLE_SIZE;i++)
-        if (i==0) table[i]=0; else table[i]=TABLE_SIZE/2/((float)i);
+        if (i==0) table[i]=0; else table[i]=TABLE_SIZE/2/((double)i);
 }
 
-float division_luit(float x)
+double division_luit(double x)
 {
     int n=(int)(x*TABLE_SIZE/2);
     printf("n=%d\n", n);
-    float y=x*table[n]-1;
-    float ret=table[n];
-    printf("y=%0.20f\nret=%0.20f\n",y,ret);
+    double y=x*table[n]-1;
+    double ret=table[n];
+    printf("y=%0.20lf\nret=%0.20lf\n",y,ret);
     ret*=(1-y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0f/x);
+    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
     y*=y;
     ret*=(1+y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0f/x);
+    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
     y*=y;
     ret*=(1-y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0f/x);
+    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
     y*=y;
     ret*=(1+y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0f/x);
+    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
     return ret;
 }
 
 void testT()
 {
-    float number, x;
-    scanf("%f", &number);
-    float result=division_luit(number);
-    printf("luit=%0.20e error=%0.20e\n", result, result-1.0f/number);
+    double number, x;
+    scanf("%lf", &number);
+    double result=division_luit(number);
+    printf("luit=%0.20e error=%0.20e\n", result, result-1.0/number);
 }
 
 int main()
