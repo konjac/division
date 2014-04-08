@@ -58,7 +58,7 @@ __global__ void computeTable()
 }
 #endif
 
-__device__ double divD_luit(double x, double number)
+__device__ double luit(double number)
 {
     int n=(int)(number*TABLE_SIZE/2);
     double y=number*table[n]-1;
@@ -66,11 +66,28 @@ __device__ double divD_luit(double x, double number)
     ret*=1-y;
     y*=y;
     ret*=1+y;
+	/*
     y*=y;
     ret*=1+y;
     y*=y;
     ret*=1+y;
-    return x*ret;
+	*/
+    return ret;
+}
+
+__device__ double divD_luit(double x, double number)
+{
+    union Data{
+        double d;
+        long long i;
+    } a;
+	a.d=number;
+	long long e=a.i&0x7ff0000000000000;
+	e=((0x7ff0000000000000-(e-0x3ff0000000000000))+0x0010000000000000);
+	a.i=(a.i&0x800fffffffffffff)|0x3ff0000000000000;
+    a.d=luit(a.d);
+	a.i=(a.i&0x800fffffffffffff)|(((a.i&0x7ff0000000000000)+e)&0x7ff0000000000000);
+	return x*a.d;
 }
 
 __device__ double divD_fisq(double x, double number)
