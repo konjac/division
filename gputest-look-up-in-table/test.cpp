@@ -106,30 +106,37 @@ void computeTable()
 double division_luit(double x)
 {
     int n=(int)(x*TABLE_SIZE/2);
-    printf("n=%d\n", n);
     double y=x*table[n]-1;
     double ret=table[n];
-    printf("y=%0.20lf\nret=%0.20lf\n",y,ret);
     ret*=(1-y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
+	printf("1st ret=%.020e\n", ret);
     y*=y;
     ret*=(1+y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
+	printf("2nd ret=%.020lf\n", ret);
     y*=y;
     ret*=(1-y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
+	printf("3th ret=%.020lf\n", ret);
     y*=y;
     ret*=(1+y);
-    printf("result=%0.20e error=%0.20e\n", ret, ret-1.0/x);
+	printf("4th ret=%.020lf\n", ret);
     return ret;
 }
 
 void testT()
 {
-    double number, x;
-    scanf("%lf", &number);
-    double result=division_luit(number);
-    printf("luit=%0.20e error=%0.20e\n", result, result-1.0/number);
+	double number;
+	scanf("%lf", &number);
+    union Data{
+        double d;
+        long long i;
+    } a;
+	a.d=number;
+	long long e=a.i&0x7ff0000000000000;
+	e=((0x7ff0000000000000-(e-0x3ff0000000000000))+0x0010000000000000);
+	a.i=(a.i&0x800fffffffffffff)|0x3ff0000000000000;
+    a.d=division_luit(a.d);
+	a.i=(a.i&0x800fffffffffffff)|(((a.i&0x7ff0000000000000)+e)&0x7ff0000000000000);
+    printf("luit=%0.20e error=%0.20e\n", a.d, a.d-1.0/number);
 }
 
 int main()
@@ -141,22 +148,5 @@ int main()
         //testF();
         testT();
     }
-    /*
-    union Data{
-        float f;
-        int i;
-    } a;
-    while (1)
-    {
-        scanf("%f",&a.f);
-        printf("f=%e i=%08x\n", a.f, a.i);
-        int e=a.i&0x7f800000;
-        printf("e=%08x e=%d\n", e, e>>23);
-        e=((~(e-0x7f800000))+0x00800000+0x7f800000)&0x7f800000;
-        printf("e=%08x e=%d\n", e, e>>23);
-        a.i=(a.i^(a.i&0x7f800000))|e;
-        printf("f=%e i=%08x\n", a.f, a.i);
-    }
-    */
     return 0;
 }
