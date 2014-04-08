@@ -28,6 +28,51 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
     }
 }
 
+#define TABLE_BLOCK 32
+#define TABLE_THREAD 32
+#define TABLE_ELEMENT_PER_THREAD 8
+#define TABLE_SIZE (TABLE_BLOCK*TABLE_THREAD*TABLE_ELEMENT_PER_THREAD)
+
+#define USE_CONSTANT_TABLE
+#ifdef USE_CONSTANT_TABLE
+__device__ __constant__ double table[TABLE_SIZE];
+double tableCpu[TABLE_SIZE];
+
+void computeTable()
+{
+	for (int i=0;i<TABLE_SIZE;i++)
+		if (i==0) tableCpu[i]=0.0; else tableCpu[i]=TABLE_SIZE/2/((double)i);
+	cudaMemcpyToSymbol(table, tableCpu, sizeof(double)*TABLE_SIZE);
+}
+#else
+__device__ double table[TABLE_SIZE];
+
+__global__ void computeTable()
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int i=0;i<TABLE_ELEMENT_PER_THREAD;i++)
+    {
+        int j=tid*TABLE_ELEMENT_PER_THREAD+i;
+        if (j==0) table[j]=0.0; else table[j]=TABLE_SIZE/2/((double)j);
+    }
+}
+#endif
+
+__device__ double divD_luit(double x, double number)
+{
+    int n=(int)(number*TABLE_SIZE/2);
+    double y=number*table[n]-1;
+    double ret=table[n];
+    ret*=1-y;
+    y*=y;
+    ret*=1+y;
+    y*=y;
+    ret*=1+y;
+    y*=y;
+    ret*=1+y;
+    return x*ret;
+}
+
 __device__ double divD_fisq(double x, double number)
 {
     // fisq
@@ -54,7 +99,7 @@ __device__ double divD_fisq(double x, double number)
 #define division(funcName, divF) \
 __global__ void funcName() { \
     int tid = blockIdx.x * blockDim.x + threadIdx.x; \
-	double x = tid; \
+	double x = tid*1e-6; \
     for (int i = 0; i < ITERATION_PER_THREAD; i++) { \
 		x += 0.0001; \
         double p1 = i + 20001.0; \
@@ -73,6 +118,7 @@ __global__ void funcName() { \
 division(division_fisq, divD_fisq)
 division(division_direct, divD_direct)
 division(division_add, divD_add)
+division(division_luit, divD_luit)
 
 
 int main(int argc, char* argv[])
@@ -80,6 +126,13 @@ int main(int argc, char* argv[])
     gpuErrchk(cudaSetDevice(0));
     gpuErrchk(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
 
+    // pre-compute for table
+#ifdef USE_CONSTANT_TABLE
+	computeTable();
+#else
+    computeTable<<<TABLE_BLOCK, TABLE_THREAD>>>();
+#endif
+    gpuErrchk(cudaGetLastError());
 
     cudaEvent_t start,stop;
     cudaEventCreate(&start);
@@ -113,6 +166,15 @@ int main(int argc, char* argv[])
     cudaEventSynchronize( stop );
     cudaEventElapsedTime( &time, start, stop );
     printf("divD_add     time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
+
+    cudaEventRecord( start, 0 );
+    division_luit<<<BLOCK_NUM, THREAD_NUM>>>();
+    gpuErrchk(cudaGetLastError());
+    cudaEventRecord( stop, 0 );
+    cudaEventSynchronize( stop );
+    gpuErrchk(cudaGetLastError());
+    cudaEventElapsedTime( &time, start, stop );
+    printf("divD_luit   time = %f ms, Gflops=%.2f \n", time, GFLOPS(time));
 
     cudaEventDestroy( start );
     cudaEventDestroy( stop );
